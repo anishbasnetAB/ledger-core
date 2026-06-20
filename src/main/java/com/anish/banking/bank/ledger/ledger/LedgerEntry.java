@@ -26,4 +26,9 @@ public class LedgerEntry {
 
     protected LedgerEntry() {}
 
+    public LedgerEntry(Long accountId, EntryType entryType, BigDecimal amount) {
+        this.accountId = accountId;
+        this.entryType = entryType;
+        this.amount = amount;
+    }
 }

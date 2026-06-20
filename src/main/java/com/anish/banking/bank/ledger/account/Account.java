@@ -24,6 +24,11 @@ public class Account {
 
     protected Account() {}            // JPA
 
+    public Account(String ownerName, String currency) {
+        this.ownerName = ownerName;
+        this.currency = currency;
+    }
+
     public Long getId() {
         return id;
     }
