@@ -42,4 +42,8 @@ public class LedgerEntry {
         this.amount = amount;
         this.transferId = transferId;
     }
+
+    public EntryType getEntryType() {
+        return entryType;
+    }
 }
