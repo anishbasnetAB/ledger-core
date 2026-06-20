@@ -31,4 +31,15 @@ public class LedgerEntry {
         this.entryType = entryType;
         this.amount = amount;
     }
+
+    @Column(name = "transfer_id")          // nullable; null for opening-balance entries
+    private Long transferId;
+
+    // new 4-arg constructor for transfer-generated entries
+    public LedgerEntry(Long accountId, EntryType entryType, BigDecimal amount, Long transferId) {
+        this.accountId = accountId;
+        this.entryType = entryType;
+        this.amount = amount;
+        this.transferId = transferId;
+    }
 }
