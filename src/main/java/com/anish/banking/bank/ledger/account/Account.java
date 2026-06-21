@@ -20,6 +20,10 @@ public class Account {
     @Column(name="balance",nullable = false, precision = 19, scale = 2)
     private BigDecimal balance;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "account_type", nullable = false)
+    private AccountType accountType;
+
     @Column(name="currency",nullable = false, length = 3)
     @JdbcTypeCode(SqlTypes.CHAR)
     private String currency;
@@ -37,6 +41,7 @@ public class Account {
         this.ownerName = ownerName;
         this.currency = currency;
         this.balance = BigDecimal.ZERO.setScale(2);
+        this.accountType = AccountType.CUSTOMER;
     }
 
     public Long getId() {
@@ -74,7 +79,7 @@ public class Account {
         if (amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Debit amount must be positive");
         }
-        if (this.balance.compareTo(amount) < 0) {
+        if (accountType == AccountType.CUSTOMER && this.balance.compareTo(amount) < 0) {
             throw new InsufficientFundsException(this.id);
         }
         this.balance = this.balance.subtract(amount).setScale(2);

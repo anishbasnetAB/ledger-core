@@ -20,5 +20,12 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> 
         """, nativeQuery = true)
     BigDecimal deriveBalance(@Param("accountId") Long accountId);
 
+    @Query(value = """
+    SELECT COALESCE(SUM(CASE WHEN entry_type = 'CREDIT' THEN amount ELSE -amount END), 0)
+    FROM ledger_entry
+    WHERE transfer_id = :transferId
+    """, nativeQuery = true)
+    BigDecimal sumSignedAmountByTransferId(@Param("transferId") Long transferId);
+
     long countByAccountIdAndEntryType(Long accountId, EntryType entryType);
 }

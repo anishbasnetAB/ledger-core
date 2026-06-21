@@ -31,15 +31,14 @@ public class TransferService {
         if (!source.getCurrency().equals(dest.getCurrency()))
             throw new CurrencyMismatchException(source.getCurrency(), dest.getCurrency());
 
-        BigDecimal balance = ledger.deriveBalance(source.getId());
-        if (balance.compareTo(req.amount()) < 0)
-            throw new InsufficientFundsException(source.getId());
-
         Transfer transfer = transfers.save(
                 new Transfer(source.getId(), dest.getId(), req.amount(), TransferStatus.COMPLETED));
 
-        ledger.save(new LedgerEntry(source.getId(), EntryType.DEBIT,  req.amount(), transfer.getId()));
-        ledger.save(new LedgerEntry(dest.getId(),   EntryType.CREDIT, req.amount(), transfer.getId()));
+        source.debit(req.amount());     // floor enforced — source is a CUSTOMER
+        dest.credit(req.amount());
+
+        ledger.save(LedgerEntry.debit(source.getId(), req.amount(), transfer.getId()));
+        ledger.save(LedgerEntry.credit(dest.getId(), req.amount(), transfer.getId()));
 
         return new TransferResponse(transfer.getId(), source.getId(), dest.getId(),
                 req.amount(), transfer.getStatus().name());
@@ -52,4 +51,6 @@ public class TransferService {
         return new TransferResponse(t.getId(), t.getSourceAccountId(),
                 t.getDestinationAccountId(), t.getAmount(), t.getStatus().name());
     }
+
+
 }
