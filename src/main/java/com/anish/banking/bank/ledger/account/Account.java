@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.account;
+import com.anish.banking.bank.ledger.transfer.InsufficientFundsException;
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -15,18 +17,26 @@ public class Account {
     @Column(name="owner_name", nullable = false)
     private String ownerName;
 
+    @Column(name="balance",nullable = false, precision = 19, scale = 2)
+    private BigDecimal balance;
+
     @Column(name="currency",nullable = false, length = 3)
     @JdbcTypeCode(SqlTypes.CHAR)
     private String currency;
 
     @Column(name="created_at", insertable = false, updatable=false)
-    public OffsetDateTime createdAt;
+    private OffsetDateTime createdAt;
+
+    @Version
+    private Long version;
+
 
     protected Account() {}            // JPA
 
     public Account(String ownerName, String currency) {
         this.ownerName = ownerName;
         this.currency = currency;
+        this.balance = BigDecimal.ZERO.setScale(2);
     }
 
     public Long getId() {
@@ -41,8 +51,35 @@ public class Account {
         return currency;
     }
 
-    private OffsetDateTime getCreatedAt() {
+    public OffsetDateTime getCreatedAt() {
         return createdAt;
     }
+
+    public BigDecimal getBalance() {
+        return balance;
+    }
+
+    public Long getVersion() {
+        return version;
+    }
+
+    public void credit(BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Credit amount must be positive");
+        }
+        this.balance = this.balance.add(amount).setScale(2);
+    }
+
+    public void debit(BigDecimal amount) {
+        if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Debit amount must be positive");
+        }
+        if (this.balance.compareTo(amount) < 0) {
+            throw new InsufficientFundsException(this.id);
+        }
+        this.balance = this.balance.subtract(amount).setScale(2);
+    }
+
+
 
 }

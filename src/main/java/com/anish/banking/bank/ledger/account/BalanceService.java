@@ -1,25 +1,64 @@
 package com.anish.banking.bank.ledger.account;
 
+import com.anish.banking.bank.ledger.ledger.LedgerEntry;
 import com.anish.banking.bank.ledger.ledger.LedgerEntryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import java.math.BigDecimal;
 
-@Service                                 // Marks this as a Spring-managed service bean.
+@Service
 public class BalanceService {
-    private final AccountRepository accounts;        // Used to confirm the account exists.
-    private final LedgerEntryRepository ledger;      // Used to derive the balance from entries.
+
+    private final AccountRepository accounts;
+    private final LedgerEntryRepository ledger;
 
     public BalanceService(AccountRepository accounts, LedgerEntryRepository ledger) {
-        this.accounts = accounts;        // Constructor injection — dependencies are final and required.
+        this.accounts = accounts;
         this.ledger = ledger;
     }
 
-    @Transactional(readOnly = true)      // Read-only transaction: a consistent snapshot with no write overhead.
+    @Transactional(readOnly = true)
     public BalanceResponse getBalance(Long accountId) {
-        Account a = accounts.findById(accountId)
-                .orElseThrow(() -> new AccountNotFoundException(accountId)); // 404 if the account doesn't exist.
-        BigDecimal balance = ledger.deriveBalance(accountId);               // Compute balance live from the ledger.
-        return new BalanceResponse(a.getId(), a.getCurrency(), balance);    // Package the result for the API.
+        Account account = accounts.findById(accountId)
+                .orElseThrow(() -> new AccountNotFoundException(accountId));
+
+        return toBalanceResponse(account);
+    }
+
+    @Transactional
+    public BalanceResponse deposit(Long accountId, BigDecimal amount) {
+        Account account = accounts.findById(accountId)
+                .orElseThrow(() -> new AccountNotFoundException(accountId));
+
+        account.credit(amount);
+
+        ledger.save(
+                LedgerEntry.credit(account.getId(), amount)
+        );
+
+        return toBalanceResponse(account);
+    }
+
+    @Transactional
+    public BalanceResponse withdraw(Long accountId, BigDecimal amount) {
+        Account account = accounts.findById(accountId)
+                .orElseThrow(() -> new AccountNotFoundException(accountId));
+
+        account.debit(amount);
+
+        ledger.save(
+                LedgerEntry.debit(account.getId(), amount)
+        );
+
+        return toBalanceResponse(account);
+    }
+
+    private BalanceResponse toBalanceResponse(Account account) {
+        return new BalanceResponse(
+                account.getId(),
+                account.getCurrency(),
+                account.getBalance()
+        );
     }
 }
