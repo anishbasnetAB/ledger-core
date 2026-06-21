@@ -41,7 +41,8 @@ class DoubleEntryInvariantTest {
         balanceService.deposit(alice.getId(), new BigDecimal("200.00"));
         balanceService.withdraw(alice.getId(), new BigDecimal("50.00"));
         transferService.transfer(new CreateTransferRequest(
-                alice.getId(), bob.getId(), new BigDecimal("75.00")));
+                alice.getId(), bob.getId(), new BigDecimal("75.00")),
+                java.util.UUID.randomUUID().toString());
 
         // --- assert 1: exactly the three movements this test created, each nets to zero ---
         Set<Long> createdMovementIds = transfers.findAll().stream()

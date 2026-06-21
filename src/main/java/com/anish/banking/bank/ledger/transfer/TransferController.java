@@ -15,8 +15,10 @@ public class TransferController {
     }
 
     @PostMapping
-    public ResponseEntity<TransferResponse> create(@Valid @RequestBody CreateTransferRequest req) {
-        TransferResponse body = transferService.transfer(req);
+    public ResponseEntity<TransferResponse> create(
+            @RequestHeader("Idempotency-Key") String idempotencyKey,
+            @Valid @RequestBody CreateTransferRequest req) {
+        TransferResponse body = transferService.transfer(req, idempotencyKey);
         return ResponseEntity.created(URI.create("/transfers/" + body.transferId())).body(body);
     }
 

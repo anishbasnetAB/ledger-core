@@ -33,7 +33,8 @@ class TransferAtomicityTest {
                         e instanceof LedgerEntry le && le.getEntryType() == EntryType.CREDIT));
 
         assertThatThrownBy(() ->
-                transferService.transfer(new CreateTransferRequest(1L, 2L, new BigDecimal("100.00"))))
+                transferService.transfer(new CreateTransferRequest(1L, 2L, new BigDecimal("100.00")),
+                        java.util.UUID.randomUUID().toString()))
                 .isInstanceOf(RuntimeException.class);
 
         // the whole transaction must have rolled back: balances exactly as before

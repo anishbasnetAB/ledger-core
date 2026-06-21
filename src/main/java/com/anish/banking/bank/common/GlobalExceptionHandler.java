@@ -10,6 +10,8 @@ import com.anish.banking.bank.ledger.transfer.SameAccountTransferException;
 import com.anish.banking.bank.ledger.transfer.InsufficientFundsException;
 import com.anish.banking.bank.ledger.transfer.CurrencyMismatchException;
 import com.anish.banking.bank.ledger.transfer.TransferNotFoundException;
+import com.anish.banking.bank.ledger.idempotency.IdempotencyKeyConflictException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -43,5 +45,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(TransferNotFoundException.class)
     public ResponseEntity<ApiError> handleTransferNotFound(TransferNotFoundException ex) {
         return status(HttpStatus.NOT_FOUND, ex.getMessage());            // 404
+    }
+
+    @ExceptionHandler(IdempotencyKeyConflictException.class)
+    public ResponseEntity<ApiError> handleIdempotencyConflict(IdempotencyKeyConflictException ex) {
+        return status(HttpStatus.CONFLICT, ex.getMessage());             // 409
+    }
+
+    @ExceptionHandler(MissingRequestHeaderException.class)
+    public ResponseEntity<ApiError> handleMissingHeader(MissingRequestHeaderException ex) {
+        return status(HttpStatus.BAD_REQUEST,                            // 400
+                "Missing required header: " + ex.getHeaderName());
     }
 }
