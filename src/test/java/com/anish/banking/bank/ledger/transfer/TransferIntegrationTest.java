@@ -32,7 +32,7 @@ class TransferIntegrationTest {
         BigDecimal sourceBefore = ledger.deriveBalance(1L);
         BigDecimal destBefore   = ledger.deriveBalance(2L);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(post("/api/transfers")
                         .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
                         .contentType("application/json")
                         .content("""
@@ -51,7 +51,7 @@ class TransferIntegrationTest {
     void overTransferIsRejectedAndBalancesUntouched() throws Exception {
         BigDecimal sourceBefore = ledger.deriveBalance(1L);
 
-        mockMvc.perform(post("/transfers")
+        mockMvc.perform(post("/api/transfers")
                         .header("Idempotency-Key", java.util.UUID.randomUUID().toString())
                         .contentType("application/json")
                         .content("""

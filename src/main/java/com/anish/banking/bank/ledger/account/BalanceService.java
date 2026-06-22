@@ -23,6 +23,16 @@ public class BalanceService {
         this.transfers = transfers;
     }
 
+    @Transactional
+    public AccountResponse createAccount(String ownerName, String currency) {
+        // Owner-supplied strings are normalized once, here, before they hit the ledger:
+        // trim the name, force the ISO currency to upper-case so "cad" and "CAD" never
+        // create two distinct currency buckets. The Account constructor seeds balance 0.00
+        // and type CUSTOMER.
+        Account account = accounts.save(new Account(ownerName.trim(), currency.toUpperCase()));
+        return AccountResponse.from(account);
+    }
+
     @Transactional(readOnly = true)
     public BalanceResponse getBalance(Long accountId) {
         Account account = accounts.findById(accountId)
