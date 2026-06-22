@@ -19,7 +19,7 @@ public class TransferController {
             @RequestHeader("Idempotency-Key") String idempotencyKey,
             @Valid @RequestBody CreateTransferRequest req) {
         TransferResponse body = transferService.transfer(req, idempotencyKey);
-        return ResponseEntity.created(URI.create("/transfers/" + body.transferId())).body(body);
+        return ResponseEntity.created(URI.create("/api/transfers/" + body.transferId())).body(body);
     }
 
     @GetMapping("/{id}")
