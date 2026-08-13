@@ -45,6 +45,14 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
 
+  # Balance-read cache + rate-limit counters (BalanceService, RateLimitFilter). No
+  # persistence configured — both uses are fine losing their data on a restart.
+  redis:
+    image: redis:7
+    container_name: bank-redis
+    ports:
+      - "6379:6379"
+
 volumes:
   bank-postgres-data:
   notifier-postgres-data:

@@ -1,9 +1,12 @@
 package com.anish.banking.bank.auth.security;
 
 import com.anish.banking.bank.common.ApiError;
+import com.anish.banking.bank.common.RateLimitFilter;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
@@ -17,6 +20,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 
 @Configuration
@@ -25,10 +29,18 @@ public class SecurityConfig {
 
     private final JwtService jwtService;
     private final ObjectMapper objectMapper;
+    private final RateLimitFilter rateLimitFilter;
 
-    public SecurityConfig(JwtService jwtService, ObjectMapper objectMapper) {
+    public SecurityConfig(JwtService jwtService, ObjectMapper objectMapper, StringRedisTemplate redis,
+                           @Value("${app.ratelimit.login.max-requests}") int loginMaxRequests,
+                           @Value("${app.ratelimit.login.window-seconds}") long loginWindowSeconds,
+                           @Value("${app.ratelimit.transfer.max-requests}") int transferMaxRequests,
+                           @Value("${app.ratelimit.transfer.window-seconds}") long transferWindowSeconds) {
         this.jwtService = jwtService;
         this.objectMapper = objectMapper;
+        this.rateLimitFilter = new RateLimitFilter(redis, objectMapper,
+                loginMaxRequests, Duration.ofSeconds(loginWindowSeconds),
+                transferMaxRequests, Duration.ofSeconds(transferWindowSeconds));
     }
 
     @Bean
@@ -38,6 +50,8 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+        JwtAuthFilter jwtAuthFilter = new JwtAuthFilter(jwtService);
+
         http
                 .csrf(csrf -> csrf.disable())      // stateless bearer-token API, no cookies to forge
                 .cors(Customizer.withDefaults())   // reuses CorsConfig's WebMvcConfigurer rules
@@ -51,7 +65,10 @@ public class SecurityConfig {
                                 writeError(response, HttpStatus.UNAUTHORIZED, "Authentication required", request.getRequestURI()))
                         .accessDeniedHandler((request, response, accessDeniedException) ->
                                 writeError(response, HttpStatus.FORBIDDEN, "Access denied", request.getRequestURI())))
-                .addFilterBefore(new JwtAuthFilter(jwtService), UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // After JwtAuthFilter so an authenticated /api/transfers request is already
+                // rate-limited by user identity, not just by IP (see RateLimitFilter#identity).
+                .addFilterAfter(rateLimitFilter, JwtAuthFilter.class);
 
         return http.build();
     }

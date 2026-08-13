@@ -65,7 +65,7 @@ Create an account and get a token immediately.
 
 ### `POST /api/auth/login`
 
-**Auth:** none
+**Auth:** none. Rate-limited (5 attempts/minute per IP by default) — see [Rate limiting](#rate-limiting).
 
 **Request body:**
 ```json
@@ -74,7 +74,7 @@ Create an account and get a token immediately.
 
 **Response `200 OK`:** same shape as register — `{ token, email, role }`.
 
-**Errors:** `400` blank email/password, `401` wrong email or password (deliberately the same message for both — don't reveal which one was wrong).
+**Errors:** `400` blank email/password, `401` wrong email or password (deliberately the same message for both — don't reveal which one was wrong), `429` too many attempts.
 
 ---
 
@@ -103,7 +103,14 @@ Every error response, from every endpoint, has this exact shape:
 | `404` | Not found | Account or transfer id doesn't exist |
 | `409` | Conflict | Email already registered, or an `Idempotency-Key` reused with a different request body |
 | `422` | Unprocessable | Insufficient funds, or a transfer between accounts with different currencies |
+| `429` | Too many requests | Rate limit exceeded on `/api/auth/login` or `/api/transfers` (see below) |
 | `500` | Server error | Unexpected — the message is always generic, nothing internal is leaked |
+
+---
+
+## Rate limiting
+
+`POST /api/auth/login` (5/minute, per IP) and `POST /api/transfers` (20/minute, per signed-in user) are rate-limited. Over the limit returns `429` in the same error shape as everything else — there's no `Retry-After` header, so on a `429` just wait roughly a minute before retrying rather than parsing anything out of the response. Nothing else is rate-limited.
 
 ---
 
@@ -172,7 +179,7 @@ Same request/response shape as deposit.
 
 Move money between two accounts of the same currency.
 
-**Auth:** required, **plus** an `Idempotency-Key` header (any client-generated unique string, e.g. `crypto.randomUUID()`). Retrying the exact same request with the same key returns the original result instead of moving money twice — generate one key per user-initiated transfer attempt, and reuse it only when retrying that same attempt (e.g. after a network timeout).
+**Auth:** required, **plus** an `Idempotency-Key` header (any client-generated unique string, e.g. `crypto.randomUUID()`). Retrying the exact same request with the same key returns the original result instead of moving money twice — generate one key per user-initiated transfer attempt, and reuse it only when retrying that same attempt (e.g. after a network timeout). Rate-limited (20 requests/minute per signed-in user by default) — see [Rate limiting](#rate-limiting).
 
 **Headers:**
 ```
@@ -201,7 +208,7 @@ Idempotency-Key: <uuid>
 }
 ```
 
-**Errors:** `400` missing `Idempotency-Key` header, validation, or same source/destination; `404` either account doesn't exist; `409` the `Idempotency-Key` was already used for a *different* request body; `422` insufficient funds or currency mismatch.
+**Errors:** `400` missing `Idempotency-Key` header, validation, or same source/destination; `404` either account doesn't exist; `409` the `Idempotency-Key` was already used for a *different* request body; `422` insufficient funds or currency mismatch; `429` rate limit exceeded.
 
 > No frontend-visible change here, but FYI: a successful transfer also publishes an event to a backend message queue (Kafka) for another internal service. It's fire-and-forget after this response is sent — nothing to call, nothing that can make this endpoint fail or respond slower.
 

@@ -56,6 +56,7 @@ All errors return a single, predictable JSON shape with the right HTTP status (4
 - **Spring Security** + **JWT** (jjwt) for authentication
 - **Flyway** for versioned database migrations
 - **Apache Kafka** (spring-kafka) for `TransferCompletedEvent` publishing — see [Design decisions](#design-decisions-worth-noting)
+- **Redis** (spring-data-redis / Lettuce) for balance-read caching and rate limiting — see [Design decisions](#design-decisions-worth-noting)
 - **JUnit 5 + AssertJ + Mockito** for testing
 - **Docker** for containerized deployment
 - Deployed on **Render**
@@ -103,6 +104,8 @@ Base path: `/api`
 
 "Required" means a valid `Authorization: Bearer <token>` header, obtained from `/api/auth/register` or `/api/auth/login`. A missing or invalid token gets a `401`; a valid token without the `ADMIN` role on an admin endpoint gets a `403` — both in the same `ApiError` shape as every other error.
 
+`POST /api/auth/login` and `POST /api/transfers` are rate-limited; going over the limit gets a `429` in the same `ApiError` shape — wait for the current window to pass and retry (see [Design decisions](#design-decisions-worth-noting)).
+
 **Example — register, then a transfer:**
 ```bash
 TOKEN=$(curl -s -X POST https://ledger-core.onrender.com/api/auth/register \
@@ -136,14 +139,16 @@ The project was built in phases, each adding one correctness guarantee on top of
 ## Running it locally
 
 ```bash
-# Start PostgreSQL
+# Start Postgres, Kafka, and Redis
 docker compose up -d
 
 # Run the app (Flyway builds the schema automatically on startup)
 ./mvnw spring-boot:run
 ```
 
-The app starts on `http://localhost:8080`.
+The app starts on `http://localhost:8080`. Redis and Kafka are both best-effort — the app
+still starts and serves requests without them, just without caching/eviction or event
+publishing actually reaching anywhere (see [Design decisions](#design-decisions-worth-noting)).
 
 ---
 
@@ -153,12 +158,14 @@ The app starts on `http://localhost:8080`.
 - **Optimistic over pessimistic locking.** Most accounts are rarely contended, so letting reads proceed freely and only failing on a real conflict is cheaper than locking every access. The trade-off is documented and tested.
 - **Validated at the boundary, enforced in the core.** Business rules like "balance can't go negative" live inside the entity itself, so they can't be bypassed by any code path.
 - **Event publishing happens after commit, not inside the transaction.** A successful transfer publishes a `TransferCompletedEvent` to Kafka (topic `transfer.completed`, keyed by transfer ID) via `ApplicationEventPublisher` + `@TransactionalEventListener(phase = AFTER_COMMIT)` — never a direct `kafkaTemplate.send()` inside `TransferService`. Publishing before commit would let a later rollback announce money movement that never actually happened; publishing after guarantees the event only exists if the transfer does. A Kafka failure at that point is logged and swallowed, never rethrown — the transfer already committed, so a messaging outage has no business turning into a false error for a caller whose money already moved. The companion `ledger-notifier` service (a separate Spring Boot app, `../ledger-notifier`) consumes that topic and stays idempotent under redelivery or concurrent delivery the same way the ledger itself stays correct under concurrency: not a check-then-insert (which races), but a single atomic `INSERT ... ON CONFLICT (transfer_id) DO NOTHING`, so a duplicate delivery is a guaranteed no-op rather than a hope.
+- **Balance cache is a safety net, not a source of truth — and it knows it.** `GET /api/accounts/{id}/balance` caches its response in Redis (`balance:{accountId}`, 45s TTL) and `BalanceService` evicts that key on every deposit, withdrawal, and transfer touching the account — reusing the exact same `ApplicationEventPublisher` + `@TransactionalEventListener(AFTER_COMMIT)` pattern as the Kafka publish, so an eviction can't fire for a change that then rolls back. A Redis failure on either side (read *or* write *or* evict) is caught and logged, never surfaced to the caller: the worst case is a read that's up to 45 seconds stale, and the value it went stale from — the stored balance column — is independently re-verified against the ledger by the scheduled reconciliation job regardless of what's cached. A stale cache is a UX nit here, not a correctness bug, which is exactly why it's allowed to exist at all next to a system this paranoid about correctness everywhere else.
+- **Rate limiting is fixed-window, on purpose, with its failure mode chosen deliberately.** `POST /api/auth/login` and `POST /api/transfers` are limited via a Redis `INCR` per `{identity}:{endpoint}:{windowStart}` key, capped and reset once per window (defaults: 5/min for login, 20/min for transfers — login is stricter since it's the more attractive brute-force target). Fixed-window is the simplest correct implementation, and its known weakness is accepted rather than hidden: a client can burst up to ~2x the limit across a window boundary (e.g. 5 requests in the last second of one window, 5 more in the first second of the next). A sliding-window or token-bucket limiter would close that gap at the cost of real complexity for a portfolio project defending against casual abuse, not a targeted attacker — not a trade worth making here. The other deliberate choice is the failure mode: if Redis itself is unreachable, the filter fails *open* (logs the error, lets the request through) rather than closed. A rate limiter's job is defense in depth; a rate limiter whose own infrastructure outage blocks every login and transfer would be a self-inflicted denial of service, which is a worse failure than no rate limiting at all.
 
 ---
 
 ## Roadmap
 
-Authentication and event publishing have landed: email + password login, JWT-protected endpoints, an ADMIN role for the reconciliation endpoints, and a Kafka `TransferCompletedEvent` consumed idempotently by a separate `ledger-notifier` service. Deliberately still open:
+Authentication, event publishing, and Redis have landed: email + password login, JWT-protected endpoints, an ADMIN role for the reconciliation endpoints, a Kafka `TransferCompletedEvent` consumed idempotently by a separate `ledger-notifier` service, a balance read cache, and fixed-window rate limiting on login/transfers. Deliberately still open:
 
 - **Account ownership.** Auth today is a login gate, not per-resource authorization — any authenticated user can act on any account. Tying accounts to their owning user, and scoping the account/transfer endpoints to it, is the natural next step.
 

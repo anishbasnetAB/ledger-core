@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -35,6 +36,10 @@ class AccountControllerTest {
     @Autowired JwtService jwtService;
 
     @MockitoBean BalanceService balanceService;
+    // SecurityConfig now also wires RateLimitFilter, which needs a StringRedisTemplate —
+    // this slice doesn't autoconfigure Redis, so it's mocked purely to satisfy that
+    // constructor dependency. None of these tests exercise rate limiting.
+    @MockitoBean StringRedisTemplate redis;
 
     private String bearerToken() {
         return "Bearer " + jwtService.generate("test@example.com", "USER");
