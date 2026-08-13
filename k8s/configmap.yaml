@@ -25,6 +25,6 @@ data:
   # or cache/rate-limit call just gets logged and swallowed. Point at the docker-compose
   # instances on this host's private IP if you want the full picture demoed; leave the
   # placeholders as-is (they'll simply fail to connect) if you only care about the HA demo.
-  KAFKA_BOOTSTRAP_SERVERS: "<HOST_PRIVATE_IP>:9092"
-  REDIS_HOST: "<HOST_PRIVATE_IP>"
+  KAFKA_BOOTSTRAP_SERVERS: "172.31.36.224:9092"
+  REDIS_HOST: "172.31.36.224"
   REDIS_PORT: "6379"
