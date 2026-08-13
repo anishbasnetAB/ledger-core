@@ -34,8 +34,8 @@ spec:
           # build process) and imported into k3s's containerd — see k8s/README.md for the
           # exact commands. Swap this for a real registry image (ghcr.io/..., etc.) if one
           # ever exists; imagePullPolicy would change to Always/IfNotPresent accordingly.
-          image: ledger-core:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/anishbasnetab/ledger-core:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           envFrom:
