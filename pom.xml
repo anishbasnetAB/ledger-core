@@ -83,6 +83,20 @@
 			<scope>runtime</scope>
 		</dependency>
 		<dependency>
+			<groupId>org.springframework.kafka</groupId>
+			<artifactId>spring-kafka</artifactId>
+		</dependency>
+		<!-- spring-kafka's JsonSerializer builds its own Jackson 2 ObjectMapper internally
+		     (separate from the app's own Jackson 3 one) and needs this to serialize
+		     OffsetDateTime. Version pinned to match jackson-databind 2.x, pulled in
+		     transitively by jjwt-jackson — Boot 4's BOM no longer manages Jackson 2. -->
+		<dependency>
+			<groupId>com.fasterxml.jackson.datatype</groupId>
+			<artifactId>jackson-datatype-jsr310</artifactId>
+			<version>2.21.4</version>
+			<scope>runtime</scope>
+		</dependency>
+		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>

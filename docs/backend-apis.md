@@ -203,6 +203,8 @@ Idempotency-Key: <uuid>
 
 **Errors:** `400` missing `Idempotency-Key` header, validation, or same source/destination; `404` either account doesn't exist; `409` the `Idempotency-Key` was already used for a *different* request body; `422` insufficient funds or currency mismatch.
 
+> No frontend-visible change here, but FYI: a successful transfer also publishes an event to a backend message queue (Kafka) for another internal service. It's fire-and-forget after this response is sent — nothing to call, nothing that can make this endpoint fail or respond slower.
+
 ### `GET /api/transfers/{id}`
 
 **Auth:** required

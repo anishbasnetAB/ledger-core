@@ -4,6 +4,8 @@ A backend money-movement service built with **Spring Boot** and **PostgreSQL**, 
 
 This is a learning project I built to go deeper than CRUD: the goal was a small but genuinely **correct-under-failure** system, the way money systems actually have to behave.
 
+*Note: at this project's scale, Kafka isn't a need — it's here deliberately, to demonstrate event-driven design and idempotent consumption alongside the transaction-safety and concurrency work elsewhere in the project.*
+
 🔗 **Live demo:** `https://ledger-core.onrender.com`
 (Hosted on Render with a managed Neon PostgreSQL database. First request after idle may take ~30–60s to wake up.)
 
@@ -53,6 +55,7 @@ All errors return a single, predictable JSON shape with the right HTTP status (4
 - **Spring Data JPA / Hibernate**
 - **Spring Security** + **JWT** (jjwt) for authentication
 - **Flyway** for versioned database migrations
+- **Apache Kafka** (spring-kafka) for `TransferCompletedEvent` publishing — see [Design decisions](#design-decisions-worth-noting)
 - **JUnit 5 + AssertJ + Mockito** for testing
 - **Docker** for containerized deployment
 - Deployed on **Render**
@@ -149,15 +152,15 @@ The app starts on `http://localhost:8080`.
 - **Stored balance + ledger as source of truth.** Each account keeps a fast-read balance column, but the ledger is authoritative — the balance is updated transactionally alongside ledger entries, and reconciliation independently verifies they agree. This is what makes the reconciliation feature meaningful.
 - **Optimistic over pessimistic locking.** Most accounts are rarely contended, so letting reads proceed freely and only failing on a real conflict is cheaper than locking every access. The trade-off is documented and tested.
 - **Validated at the boundary, enforced in the core.** Business rules like "balance can't go negative" live inside the entity itself, so they can't be bypassed by any code path.
+- **Event publishing happens after commit, not inside the transaction.** A successful transfer publishes a `TransferCompletedEvent` to Kafka (topic `transfer.completed`, keyed by transfer ID) via `ApplicationEventPublisher` + `@TransactionalEventListener(phase = AFTER_COMMIT)` — never a direct `kafkaTemplate.send()` inside `TransferService`. Publishing before commit would let a later rollback announce money movement that never actually happened; publishing after guarantees the event only exists if the transfer does. A Kafka failure at that point is logged and swallowed, never rethrown — the transfer already committed, so a messaging outage has no business turning into a false error for a caller whose money already moved. The companion `ledger-notifier` service (a separate Spring Boot app, `../ledger-notifier`) consumes that topic and stays idempotent under redelivery or concurrent delivery the same way the ledger itself stays correct under concurrency: not a check-then-insert (which races), but a single atomic `INSERT ... ON CONFLICT (transfer_id) DO NOTHING`, so a duplicate delivery is a guaranteed no-op rather than a hope.
 
 ---
 
 ## Roadmap
 
-Authentication landed: email + password login, JWT-protected endpoints, and an ADMIN role for the reconciliation endpoints. Deliberately still open:
+Authentication and event publishing have landed: email + password login, JWT-protected endpoints, an ADMIN role for the reconciliation endpoints, and a Kafka `TransferCompletedEvent` consumed idempotently by a separate `ledger-notifier` service. Deliberately still open:
 
 - **Account ownership.** Auth today is a login gate, not per-resource authorization — any authenticated user can act on any account. Tying accounts to their owning user, and scoping the account/transfer endpoints to it, is the natural next step.
-- **Event publishing.** `TransferService`/`BalanceService` have a clean seam to publish a `TransferCompleted` event (e.g. to Kafka) for an audit or notification consumer, off the synchronous money-movement path. Not built — there's no consumer yet to justify it.
 
 ---
 

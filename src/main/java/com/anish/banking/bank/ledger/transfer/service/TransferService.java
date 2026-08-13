@@ -11,6 +11,7 @@ import com.anish.banking.bank.ledger.ledger.model.LedgerEntry;
 import com.anish.banking.bank.ledger.ledger.repository.LedgerEntryRepository;
 import com.anish.banking.bank.ledger.transfer.dto.CreateTransferRequest;
 import com.anish.banking.bank.ledger.transfer.dto.TransferResponse;
+import com.anish.banking.bank.ledger.transfer.event.TransferCompletedEvent;
 import com.anish.banking.bank.ledger.transfer.exception.CurrencyMismatchException;
 import com.anish.banking.bank.ledger.transfer.exception.SameAccountTransferException;
 import com.anish.banking.bank.ledger.transfer.exception.TransferNotFoundException;
@@ -19,8 +20,11 @@ import com.anish.banking.bank.ledger.transfer.model.TransferStatus;
 import com.anish.banking.bank.ledger.transfer.repository.TransferRepository;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
 
 @Service
 public class TransferService {
@@ -29,16 +33,19 @@ public class TransferService {
     private final TransferRepository transfers;
     private final IdempotencyKeyRepository idempotencyKeys;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher events;
 
     public TransferService(AccountRepository accounts, LedgerEntryRepository ledger,
                            TransferRepository transfers,
                            IdempotencyKeyRepository idempotencyKeys,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           ApplicationEventPublisher events) {
         this.accounts = accounts;
         this.ledger = ledger;
         this.transfers = transfers;
         this.idempotencyKeys = idempotencyKeys;
         this.objectMapper = objectMapper;
+        this.events = events;
     }
 
     @Transactional
@@ -82,6 +89,12 @@ public class TransferService {
 
         ledger.save(LedgerEntry.debit(source.getId(), req.amount(), transfer.getId()));
         ledger.save(LedgerEntry.credit(dest.getId(), req.amount(), transfer.getId()));
+
+        // Published now, inside the transaction, but only *delivered* to Kafka after commit
+        // (see TransferEventPublisher) — publishEvent here just queues it with Spring; nothing
+        // reaches the broker if this method rolls back after this point.
+        events.publishEvent(new TransferCompletedEvent(transfer.getId(), source.getId(), dest.getId(),
+                req.amount(), OffsetDateTime.now()));
 
         return new TransferResponse(transfer.getId(), source.getId(), dest.getId(),
                 req.amount(), transfer.getStatus().name());
