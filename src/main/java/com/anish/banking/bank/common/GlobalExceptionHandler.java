@@ -1,11 +1,13 @@
 package com.anish.banking.bank.common;
 
-import com.anish.banking.bank.ledger.account.AccountNotFoundException;
-import com.anish.banking.bank.ledger.idempotency.IdempotencyKeyConflictException;
-import com.anish.banking.bank.ledger.transfer.CurrencyMismatchException;
-import com.anish.banking.bank.ledger.transfer.InsufficientFundsException;
-import com.anish.banking.bank.ledger.transfer.SameAccountTransferException;
-import com.anish.banking.bank.ledger.transfer.TransferNotFoundException;
+import com.anish.banking.bank.auth.exception.EmailAlreadyInUseException;
+import com.anish.banking.bank.auth.exception.InvalidCredentialsException;
+import com.anish.banking.bank.ledger.account.exception.AccountNotFoundException;
+import com.anish.banking.bank.ledger.idempotency.exception.IdempotencyKeyConflictException;
+import com.anish.banking.bank.ledger.transfer.exception.CurrencyMismatchException;
+import com.anish.banking.bank.ledger.transfer.exception.InsufficientFundsException;
+import com.anish.banking.bank.ledger.transfer.exception.SameAccountTransferException;
+import com.anish.banking.bank.ledger.transfer.exception.TransferNotFoundException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -46,9 +48,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return respond(HttpStatus.NOT_FOUND, ex.getMessage(), request);                 // 404
     }
 
-    @ExceptionHandler(IdempotencyKeyConflictException.class)
-    public ResponseEntity<ApiError> handleConflict(IdempotencyKeyConflictException ex, HttpServletRequest request) {
+    @ExceptionHandler({IdempotencyKeyConflictException.class, EmailAlreadyInUseException.class})
+    public ResponseEntity<ApiError> handleConflict(RuntimeException ex, HttpServletRequest request) {
         return respond(HttpStatus.CONFLICT, ex.getMessage(), request);                  // 409
+    }
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ApiError> handleInvalidCredentials(InvalidCredentialsException ex, HttpServletRequest request) {
+        return respond(HttpStatus.UNAUTHORIZED, ex.getMessage(), request);              // 401
     }
 
     // Well-formed but violates a stateful rule (balance/currency known only after load).

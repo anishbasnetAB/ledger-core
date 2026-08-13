@@ -1,6 +1,6 @@
 package com.anish.banking.bank.ledger.idempotency;
 
-import com.anish.banking.bank.ledger.transfer.CreateTransferRequest;
+import com.anish.banking.bank.ledger.transfer.dto.CreateTransferRequest;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;

@@ -35,6 +35,9 @@ The ledger table is protected at the database level by a trigger that rejects an
 **Idempotent transfers**
 Transfers require an `Idempotency-Key` header. If a client retries the same request (e.g. after a timeout), the money moves only once and the original result is returned. Reusing a key for a genuinely different request is safely rejected.
 
+**Authentication**
+Every endpoint except health and auth itself requires a signed-in user. Register or log in with email + password (hashed with bcrypt, no email verification) to get back a stateless JWT; requests carry it as `Authorization: Bearer <token>`. A lightweight USER/ADMIN role gates the reconciliation admin endpoints to ADMIN only.
+
 **Automated reconciliation**
 A scheduled job re-checks every account's stored balance against its ledger-derived balance and records any mismatch as a tracked "break" — the same end-of-day integrity check banks run. It detects discrepancies and never silently "fixes" them, preserving the audit trail.
 
@@ -48,6 +51,7 @@ All errors return a single, predictable JSON shape with the right HTTP status (4
 - **Java 21**, **Spring Boot**
 - **PostgreSQL** (managed via Neon in production)
 - **Spring Data JPA / Hibernate**
+- **Spring Security** + **JWT** (jjwt) for authentication
 - **Flyway** for versioned database migrations
 - **JUnit 5 + AssertJ + Mockito** for testing
 - **Docker** for containerized deployment
@@ -55,26 +59,56 @@ All errors return a single, predictable JSON shape with the right HTTP status (4
 
 ---
 
+## Project structure
+
+Package-by-feature, and layered the same way inside each feature:
+
+```
+src/main/java/com/anish/banking/bank/
+├── auth/              # register, login, JWT issue/verify, roles
+│   ├── controller/  dto/  exception/  model/  repository/  security/  service/
+├── ledger/
+│   ├── account/       # same controller/dto/exception/model/repository/service shape
+│   ├── transfer/
+│   ├── ledger/        # ledger entries — model/repository only, nothing external calls it directly
+│   └── idempotency/
+├── reconciliation/
+└── common/            # cross-cutting: the one ApiError shape, CORS, health check
+```
+
+Every feature gets `controller/ dto/ model/ repository/ service/` (plus `exception/` where it has its own exceptions) — but only the folders it actually needs: `ledger.ledger` has no controller, and `idempotency`'s `RequestHasher` is a plain static helper, not forced into `service/` just to fit the pattern.
+
+---
+
 ## API overview
 
 Base path: `/api`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET`  | `/api/health` | Health check |
-| `POST` | `/api/accounts` | Open an account |
-| `GET`  | `/api/accounts/{id}/balance` | Get balance |
-| `POST` | `/api/accounts/{id}/deposit` | Deposit funds |
-| `POST` | `/api/accounts/{id}/withdraw` | Withdraw funds |
-| `POST` | `/api/transfers` | Transfer between accounts (requires `Idempotency-Key` header) |
-| `GET`  | `/api/transfers/{id}` | Get a transfer |
-| `POST` | `/api/admin/reconciliation/run` | Trigger a reconciliation sweep |
-| `GET`  | `/api/admin/reconciliation/breaks` | View detected discrepancies |
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `GET`  | `/api/health` | Health check | none |
+| `POST` | `/api/auth/register` | Register (email + password) → returns a JWT | none |
+| `POST` | `/api/auth/login` | Log in → returns a JWT | none |
+| `POST` | `/api/accounts` | Open an account | required |
+| `GET`  | `/api/accounts/{id}/balance` | Get balance | required |
+| `POST` | `/api/accounts/{id}/deposit` | Deposit funds | required |
+| `POST` | `/api/accounts/{id}/withdraw` | Withdraw funds | required |
+| `POST` | `/api/transfers` | Transfer between accounts (requires `Idempotency-Key` header) | required |
+| `GET`  | `/api/transfers/{id}` | Get a transfer | required |
+| `POST` | `/api/admin/reconciliation/run` | Trigger a reconciliation sweep | ADMIN role |
+| `GET`  | `/api/admin/reconciliation/breaks` | View detected discrepancies | ADMIN role |
 
-**Example — a transfer:**
+"Required" means a valid `Authorization: Bearer <token>` header, obtained from `/api/auth/register` or `/api/auth/login`. A missing or invalid token gets a `401`; a valid token without the `ADMIN` role on an admin endpoint gets a `403` — both in the same `ApiError` shape as every other error.
+
+**Example — register, then a transfer:**
 ```bash
+TOKEN=$(curl -s -X POST https://ledger-core.onrender.com/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"a-strong-password"}' | jq -r .token)
+
 curl -X POST https://ledger-core.onrender.com/api/transfers \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Idempotency-Key: $(uuidgen)" \
   -d '{"sourceAccountId":1,"destinationAccountId":2,"amount":50.00}'
 ```
@@ -92,6 +126,7 @@ The project was built in phases, each adding one correctness guarantee on top of
 | Double-entry ledger | Detecting data corruption via balanced, immutable records |
 | Idempotency | Preventing double-charges on retried requests |
 | Reconciliation | Automatically verifying the books balance |
+| Authentication | Stateless JWT login gate + role-based authorization, verified end-to-end (register → token → protected route → role-gated route) |
 
 ---
 
@@ -119,7 +154,10 @@ The app starts on `http://localhost:8080`.
 
 ## Roadmap
 
-The next planned phase is **authentication & authorization** — login, and ensuring a user can only act on accounts they own. The current deployment is a demonstration and its endpoints are intentionally open; user identity and access control are the documented next step.
+Authentication landed: email + password login, JWT-protected endpoints, and an ADMIN role for the reconciliation endpoints. Deliberately still open:
+
+- **Account ownership.** Auth today is a login gate, not per-resource authorization — any authenticated user can act on any account. Tying accounts to their owning user, and scoping the account/transfer endpoints to it, is the natural next step.
+- **Event publishing.** `TransferService`/`BalanceService` have a clean seam to publish a `TransferCompleted` event (e.g. to Kafka) for an audit or notification consumer, off the synchronous money-movement path. Not built — there's no consumer yet to justify it.
 
 ---
 
