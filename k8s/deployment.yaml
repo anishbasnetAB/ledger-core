@@ -1,0 +1,84 @@
+# Demonstrates process-level HA (pod crash recovery, zero-downtime rolling deploys) on a
+# single-node k3s cluster — NOT node-level HA. All 3 replicas land on the same EC2
+# instance, so this proves nothing about surviving a machine failure. See "Design
+# decisions worth noting" in the main README for the honest version of this tradeoff.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-core
+  labels:
+    app: ledger-core
+spec:
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      # Explicit, not left at the (perfectly fine) k8s default: a new pod must be Ready
+      # before an old one is torn down, so the Service always has 3 backends during a
+      # rollout, never fewer. This is what "zero-downtime rolling deploy" is actually
+      # demonstrating — it's a property of this setting + the readinessProbe below, not
+      # something that happens automatically just because there are 3 replicas.
+      maxUnavailable: 0
+      maxSurge: 1
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: ledger-core
+  template:
+    metadata:
+      labels:
+        app: ledger-core
+    spec:
+      containers:
+        - name: ledger-core
+          # Built locally on this node from the repo's own Dockerfile (no registry, no new
+          # build process) and imported into k3s's containerd — see k8s/README.md for the
+          # exact commands. Swap this for a real registry image (ghcr.io/..., etc.) if one
+          # ever exists; imagePullPolicy would change to Always/IfNotPresent accordingly.
+          image: ledger-core:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ledger-core-config
+            - secretRef:
+                name: ledger-core-secrets
+          env:
+            # Containerized JVMs default to using ~25% of the container's memory limit as
+            # max heap (conservative, meant for unknown/large limits) — at the 512Mi limit
+            # below that's ~128Mi, too tight for Hibernate + Kafka/Redis clients. Raised
+            # explicitly; no Dockerfile change needed, java picks this up on its own.
+            - name: JAVA_TOOL_OPTIONS
+              value: "-XX:MaxRAMPercentage=70.0"
+          # Sized for 3 of these coexisting on a t3.medium (2 vCPU / 4GiB): 3x requests
+          # leaves headroom for k3s's own system pods (kubelet, containerd, coredns, ...),
+          # and 3x limits (~1.5GiB, ~1.5 vCPU) stays under the node's 4GiB/2vCPU with room
+          # to spare. Not left unset — an unbounded pod on a shared single node is exactly
+          # the kind of thing that takes the other replicas down with it.
+          resources:
+            requests:
+              cpu: 200m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Required, not optional: without these, a crashed or still-starting pod looks
+          # identical to a healthy one to the Service, and "3 replicas" stops meaning
+          # anything. GET /api/health is unauthenticated and checks nothing external (see
+          # HealthController) — it only reflects whether this process itself is alive.
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 15  # this app boots in ~2s locally; generous margin for a shared node
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 30  # longer than readiness on purpose: don't restart a pod that's merely slow to become ready
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3

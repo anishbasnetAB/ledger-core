@@ -1,0 +1,30 @@
+# Non-secret app config, read straight from application-prod.properties / application.properties
+# (see the ${ENV_VAR:default} placeholders there — these are the same names).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ledger-core-config
+data:
+  # Render (the real deployment target) never sets this and instead keeps prod-only values
+  # duplicated into the base application.properties (see the comments there) — but here we
+  # control the environment directly, so activate the prod profile properly: it's the only
+  # place spring.datasource.url is wired to an env var. Without this, the app falls back to
+  # the base profile's hardcoded jdbc:postgresql://localhost:5433/bank, which doesn't exist
+  # inside a pod, and every replica would crash-loop.
+  SPRING_PROFILES_ACTIVE: "prod"
+
+  # REQUIRED. The app needs a reachable Postgres to even start (Flyway + ddl-auto=validate
+  # run at boot) — this is not best-effort like Kafka/Redis below. Point this at whatever
+  # Postgres this deployment actually has: the same Neon instance the Render deployment
+  # uses, or the docker-compose Postgres already on this EC2 host (reachable from pods via
+  # the node's private IP, not "localhost" — pods have their own network namespace).
+  SPRING_DATASOURCE_URL: "jdbc:postgresql://<POSTGRES_HOST>:5432/bank"
+
+  # Best-effort, same as in local dev: the app starts and serves requests fine without
+  # these reachable (see "Design decisions worth noting" in the main README) — a publish
+  # or cache/rate-limit call just gets logged and swallowed. Point at the docker-compose
+  # instances on this host's private IP if you want the full picture demoed; leave the
+  # placeholders as-is (they'll simply fail to connect) if you only care about the HA demo.
+  KAFKA_BOOTSTRAP_SERVERS: "<HOST_PRIVATE_IP>:9092"
+  REDIS_HOST: "<HOST_PRIVATE_IP>"
+  REDIS_PORT: "6379"

@@ -1,0 +1,33 @@
+# ClusterIP: the default and what the demo commands in k8s/README.md use, via
+# `kubectl port-forward`. Fine for a demo run from the same EC2 instance (or over SSH
+# port-forwarding) — nothing here needs to be reachable from the open internet.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger-core
+spec:
+  type: ClusterIP
+  selector:
+    app: ledger-core
+  ports:
+    - port: 80
+      targetPort: 8080
+
+---
+# Uncomment only if you actually need to hit this from outside the instance without
+# `kubectl port-forward` (e.g. curling it from your laptop against the EC2 public IP).
+# NodePort, not an Ingress controller: one Service to expose, so a whole
+# ingress-nginx/Traefik install would be infra this demo doesn't need.
+#
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: ledger-core-nodeport
+# spec:
+#   type: NodePort
+#   selector:
+#     app: ledger-core
+#   ports:
+#     - port: 80
+#       targetPort: 8080
+#       nodePort: 30080   # reach it at http://<ec2-public-ip>:30080 — open that port in the EC2 security group first
