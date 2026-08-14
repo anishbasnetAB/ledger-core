@@ -1,5 +1,7 @@
 package com.anish.banking.bank.reconciliation.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.model.AccountType;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
@@ -18,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -26,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ReconciliationServiceTest {
 
     @Autowired AccountRepository accounts;
+    @Autowired UserRepository users;
     @Autowired BalanceService balanceService;
     @Autowired ReconciliationService reconciliationService;
     @Autowired ReconciliationBreakRepository breaks;
@@ -33,11 +37,16 @@ class ReconciliationServiceTest {
 
     @PersistenceContext EntityManager em;
 
+    private Long newOwner() {
+        return users.save(new User("owner-" + UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+    }
+
     @Test
     void reconciliationDetectsCorruptedAccountAndLeavesCleanAccountsAlone() {
         // --- arrange: two customer accounts + the settlement account ---
-        Account alice = accounts.save(new Account("Recon Alice", "CAD"));
-        Account bob = accounts.save(new Account("Recon Bob", "CAD"));
+        Long ownerId = newOwner();
+        Account alice = accounts.save(new Account("Recon Alice", "CAD", ownerId));
+        Account bob = accounts.save(new Account("Recon Bob", "CAD", ownerId));
         Account settlement = accounts
                 .findByAccountTypeAndCurrency(AccountType.SETTLEMENT, "CAD")
                 .orElseThrow();
@@ -47,8 +56,8 @@ class ReconciliationServiceTest {
         Long settlementId = settlement.getId();
 
         // fund both through the real service so stored == derived for each
-        balanceService.deposit(aliceId, new BigDecimal("200.00"));
-        balanceService.deposit(bobId, new BigDecimal("100.00"));
+        balanceService.deposit(aliceId, new BigDecimal("200.00"), UUID.randomUUID().toString(), ownerId);
+        balanceService.deposit(bobId, new BigDecimal("100.00"), UUID.randomUUID().toString(), ownerId);
 
         // Push our consistent writes to the DB, then evict them from the persistence
         // context. Without the clear(), reconciliation's findAll() would hand back
@@ -109,8 +118,9 @@ class ReconciliationServiceTest {
     @Test
     void reconciliationBreakIsRedetectedWithoutDuplicateAndResolvedWhenBalancesMatch() {
         // --- arrange: a customer account that will drift, a clean one, + settlement ---
-        Account alice = accounts.save(new Account("Lifecycle Alice", "CAD"));
-        Account clean = accounts.save(new Account("Lifecycle Clean", "CAD"));
+        Long ownerId = newOwner();
+        Account alice = accounts.save(new Account("Lifecycle Alice", "CAD", ownerId));
+        Account clean = accounts.save(new Account("Lifecycle Clean", "CAD", ownerId));
         Account settlement = accounts
                 .findByAccountTypeAndCurrency(AccountType.SETTLEMENT, "CAD")
                 .orElseThrow();
@@ -120,8 +130,8 @@ class ReconciliationServiceTest {
         Long settlementId = settlement.getId();
 
         // fund both through the real service so stored == derived for each
-        balanceService.deposit(aliceId, new BigDecimal("200.00"));
-        balanceService.deposit(cleanId, new BigDecimal("100.00"));
+        balanceService.deposit(aliceId, new BigDecimal("200.00"), UUID.randomUUID().toString(), ownerId);
+        balanceService.deposit(cleanId, new BigDecimal("100.00"), UUID.randomUUID().toString(), ownerId);
 
         // push consistent writes, then drop them from the persistence context so each
         // sweep re-reads rows from the DB instead of cached (uncorrupted) entities.

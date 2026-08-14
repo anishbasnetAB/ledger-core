@@ -29,6 +29,14 @@ public class Account {
     @JdbcTypeCode(SqlTypes.CHAR)
     private String currency;
 
+    // The user allowed to act on this account (view balance, deposit, withdraw, transfer out).
+    // Every account has exactly one — see V13__add_owner_to_account.sql for how the pre-auth
+    // seed/settlement accounts got backfilled. Not a JPA @ManyToOne on purpose: nothing here
+    // needs to navigate to the User entity, just compare an id, so a plain FK column avoids
+    // pulling auth's User into the ledger package for no reason.
+    @Column(name = "owner_user_id", nullable = false)
+    private Long ownerUserId;
+
     @Column(name="created_at", insertable = false, updatable=false)
     private OffsetDateTime createdAt;
 
@@ -38,9 +46,10 @@ public class Account {
 
     protected Account() {}            // JPA
 
-    public Account(String ownerName, String currency) {
+    public Account(String ownerName, String currency, Long ownerUserId) {
         this.ownerName = ownerName;
         this.currency = currency;
+        this.ownerUserId = ownerUserId;
         this.balance = BigDecimal.ZERO.setScale(2);
         this.accountType = AccountType.CUSTOMER;
     }
@@ -67,6 +76,10 @@ public class Account {
 
     public Long getVersion() {
         return version;
+    }
+
+    public Long getOwnerUserId() {
+        return ownerUserId;
     }
 
     public void credit(BigDecimal amount) {

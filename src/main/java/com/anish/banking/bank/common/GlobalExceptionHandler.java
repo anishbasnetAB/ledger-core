@@ -2,6 +2,7 @@ package com.anish.banking.bank.common;
 
 import com.anish.banking.bank.auth.exception.EmailAlreadyInUseException;
 import com.anish.banking.bank.auth.exception.InvalidCredentialsException;
+import com.anish.banking.bank.ledger.account.exception.AccountAccessDeniedException;
 import com.anish.banking.bank.ledger.account.exception.AccountNotFoundException;
 import com.anish.banking.bank.ledger.idempotency.exception.IdempotencyKeyConflictException;
 import com.anish.banking.bank.ledger.transfer.exception.CurrencyMismatchException;
@@ -56,6 +57,14 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(InvalidCredentialsException.class)
     public ResponseEntity<ApiError> handleInvalidCredentials(InvalidCredentialsException ex, HttpServletRequest request) {
         return respond(HttpStatus.UNAUTHORIZED, ex.getMessage(), request);              // 401
+    }
+
+    // Not owned by the caller (or doesn't exist -- the two look identical on purpose, see
+    // AccountAccessDeniedException). 403, not 404: this is an authorization failure, not a
+    // missing-resource one, and the client is authenticated fine, just not allowed here.
+    @ExceptionHandler(AccountAccessDeniedException.class)
+    public ResponseEntity<ApiError> handleAccountAccessDenied(AccountAccessDeniedException ex, HttpServletRequest request) {
+        return respond(HttpStatus.FORBIDDEN, ex.getMessage(), request);                 // 403
     }
 
     // Well-formed but violates a stateful rule (balance/currency known only after load).

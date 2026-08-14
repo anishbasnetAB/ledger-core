@@ -35,10 +35,19 @@ class AuthIntegrationTest {
                 .andExpect(jsonPath("$.token").exists())
                 .andReturn().getResponse().getContentAsString();
 
-        // a valid token from registration works immediately on a protected endpoint
         String bearer = "Bearer " + token.split("\"token\":\"")[1].split("\"")[0];
-        mockMvc.perform(get("/api/accounts/1/balance").header("Authorization", bearer))
-                .andExpect(status().isOk());
+
+        // A valid token from registration works immediately on a protected endpoint -- proven
+        // against an account this freshly-registered user actually owns (account ids from the
+        // seed data belong to someone else and are exactly what ownership now blocks; see
+        // AccountOwnershipTest for that side of it).
+        mockMvc.perform(post("/api/accounts")
+                        .header("Authorization", bearer)
+                        .contentType("application/json")
+                        .content("""
+                                {"ownerName":"Auth Test Owner","currency":"CAD"}
+                                """))
+                .andExpect(status().isCreated());
 
         // logging in with the same credentials also succeeds
         mockMvc.perform(post("/api/auth/login")

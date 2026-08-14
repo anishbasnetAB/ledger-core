@@ -34,14 +34,30 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
             jwtService.parse(header.substring(7)).ifPresent(claims -> {
+                Long userId = parseUserId(claims);
+                if (userId == null) {
+                    return;   // pre-ownership-check token with no userId claim -> treat as anonymous
+                }
                 String email = claims.getSubject();
                 String role = claims.get("role", String.class);
                 var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
-                var authentication = new UsernamePasswordAuthenticationToken(email, null, authorities);
+                var authentication = new UsernamePasswordAuthenticationToken(
+                        new AuthenticatedUser(userId, email), null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             });
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    // Defensive, not load-bearing today: a token minted before the userId claim existed (or
+    // otherwise tampered with) shouldn't crash the filter chain, it should just fail to
+    // authenticate, same as any other malformed token.
+    private Long parseUserId(Claims claims) {
+        try {
+            return Long.valueOf(claims.get("userId", String.class));
+        } catch (NumberFormatException | NullPointerException e) {
+            return null;
+        }
     }
 }

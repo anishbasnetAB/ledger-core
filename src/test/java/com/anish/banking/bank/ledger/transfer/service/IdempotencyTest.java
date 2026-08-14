@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.transfer.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
 import com.anish.banking.bank.ledger.idempotency.exception.IdempotencyKeyConflictException;
@@ -13,6 +15,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -21,13 +24,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class IdempotencyTest {
 
     @Autowired AccountRepository accounts;
+    @Autowired UserRepository users;
     @Autowired LedgerEntryRepository ledger;
     @Autowired TransferService transferService;
 
+    private Long newOwner() {
+        return users.save(new User("owner-" + UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+    }
+
     @Test
     void sameKeyReplaysAndMovesMoneyOnce() {
-        Account alice = accounts.save(new Account("Alice", "CAD"));
-        Account bob = accounts.save(new Account("Bob", "CAD"));
+        Long ownerId = newOwner();
+        Account alice = accounts.save(new Account("Alice", "CAD", ownerId));
+        Account bob = accounts.save(new Account("Bob", "CAD", ownerId));
 
         Account aliceFunded = accounts.findById(alice.getId()).orElseThrow();
         aliceFunded.credit(new BigDecimal("500.00"));
@@ -37,8 +46,8 @@ class IdempotencyTest {
                 alice.getId(), bob.getId(), new BigDecimal("100.00"));
         String key = "fixed-key-123";
 
-        TransferResponse first = transferService.transfer(req, key);
-        TransferResponse second = transferService.transfer(req, key);
+        TransferResponse first = transferService.transfer(req, key, ownerId);
+        TransferResponse second = transferService.transfer(req, key, ownerId);
 
         assertThat(first.transferId()).isEqualTo(second.transferId());
         assertThat(first.amount()).isEqualByComparingTo(second.amount());
@@ -52,8 +61,9 @@ class IdempotencyTest {
 
     @Test
     void sameKeyDifferentRequestIsRejected() {
-        Account alice = accounts.save(new Account("Alice", "CAD"));
-        Account bob = accounts.save(new Account("Bob", "CAD"));
+        Long ownerId = newOwner();
+        Account alice = accounts.save(new Account("Alice", "CAD", ownerId));
+        Account bob = accounts.save(new Account("Bob", "CAD", ownerId));
 
         Account aliceFunded = accounts.findById(alice.getId()).orElseThrow();
         aliceFunded.credit(new BigDecimal("500.00"));
@@ -61,19 +71,20 @@ class IdempotencyTest {
 
         String key = "reused-key-456";
         transferService.transfer(
-                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("100.00")), key);
+                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("100.00")), key, ownerId);
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         transferService.transfer(
-                                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("999.00")), key))
+                                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("999.00")), key, ownerId))
                 .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 
     @Test
     void sameKeyDifferentDestinationIsRejected() {
-        Account alice = accounts.save(new Account("Alice", "CAD"));
-        Account bob = accounts.save(new Account("Bob", "CAD"));
-        Account carol = accounts.save(new Account("Carol", "CAD"));
+        Long ownerId = newOwner();
+        Account alice = accounts.save(new Account("Alice", "CAD", ownerId));
+        Account bob = accounts.save(new Account("Bob", "CAD", ownerId));
+        Account carol = accounts.save(new Account("Carol", "CAD", ownerId));
 
         Account aliceFunded = accounts.findById(alice.getId()).orElseThrow();
         aliceFunded.credit(new BigDecimal("500.00"));
@@ -81,12 +92,12 @@ class IdempotencyTest {
 
         String key = "dest-key-789";
         transferService.transfer(
-                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("100.00")), key);
+                new CreateTransferRequest(alice.getId(), bob.getId(), new BigDecimal("100.00")), key, ownerId);
 
         // same key, same amount, same source, but a DIFFERENT destination -> must conflict
         org.assertj.core.api.Assertions.assertThatThrownBy(() ->
                         transferService.transfer(
-                                new CreateTransferRequest(alice.getId(), carol.getId(), new BigDecimal("100.00")), key))
+                                new CreateTransferRequest(alice.getId(), carol.getId(), new BigDecimal("100.00")), key, ownerId))
                 .isInstanceOf(IdempotencyKeyConflictException.class);
     }
 }

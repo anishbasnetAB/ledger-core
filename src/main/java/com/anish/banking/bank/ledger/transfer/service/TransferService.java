@@ -1,5 +1,6 @@
 package com.anish.banking.bank.ledger.transfer.service;
 
+import com.anish.banking.bank.ledger.account.exception.AccountAccessDeniedException;
 import com.anish.banking.bank.ledger.account.exception.AccountNotFoundException;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
@@ -49,7 +50,14 @@ public class TransferService {
     }
 
     @Transactional
-    public TransferResponse transfer(CreateTransferRequest req, String idempotencyKey) {
+    public TransferResponse transfer(CreateTransferRequest req, String idempotencyKey, Long callerId) {
+        // A caller may send money TO any account, but only ever moves money FROM one they
+        // own -- checked first, before the idempotency store or anything else, and on every
+        // call including a replay (a leaked/reused Idempotency-Key is not a way around this).
+        if (!accounts.existsByIdAndOwnerUserId(req.sourceAccountId(), callerId)) {
+            throw new AccountAccessDeniedException();
+        }
+
         String incomingHash = RequestHasher.hash(req);
 
         var existing = idempotencyKeys.findByIdempotencyKey(idempotencyKey);

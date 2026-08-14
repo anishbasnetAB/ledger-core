@@ -40,7 +40,7 @@ class RateLimitFilterTest {
     }
 
     private String bearerToken() {
-        return "Bearer " + jwtService.generate("ratelimit-test@example.com", "USER");
+        return "Bearer " + jwtService.generate(1L, "ratelimit-test@example.com", "USER");
     }
 
     private String transferBody() {

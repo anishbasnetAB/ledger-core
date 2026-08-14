@@ -27,10 +27,14 @@ public class JwtService {
         this.expirationMinutes = expirationMinutes;
     }
 
-    public String generate(String email, String role) {
+    public String generate(Long userId, String email, String role) {
         Instant now = Instant.now();
         return Jwts.builder()
                 .subject(email)
+                // Stored as a string, same as "role" below — sidesteps JJWT's numeric-claim
+                // round-tripping (a small JSON number can come back as Integer, not Long) for
+                // one extra claim we'd otherwise have to think about.
+                .claim("userId", userId.toString())
                 .claim("role", role)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expirationMinutes * 60)))

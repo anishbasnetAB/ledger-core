@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.account.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.dto.BalanceResponse;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
@@ -11,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import java.math.BigDecimal;
 import java.util.Queue;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -26,6 +29,9 @@ class OptimisticLockingWithdrawConcurrencyTest {
     private AccountRepository accounts;
 
     @Autowired
+    private UserRepository users;
+
+    @Autowired
     private BalanceService balanceService;
 
     @Autowired
@@ -33,10 +39,11 @@ class OptimisticLockingWithdrawConcurrencyTest {
 
     @Test
     void concurrentWithdrawalsDoNotOverdrawAccount() throws Exception {
-        Account account = accounts.save(new Account("Concurrency Test Account", "CAD"));
+        Long ownerId = users.save(new User("owner-" + UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+        Account account = accounts.save(new Account("Concurrency Test Account", "CAD", ownerId));
         Long accountId = account.getId();
 
-        balanceService.deposit(accountId, new BigDecimal("500.00"));
+        balanceService.deposit(accountId, new BigDecimal("500.00"), UUID.randomUUID().toString(), ownerId);
 
         int threadCount = 10;
         BigDecimal withdrawAmount = new BigDecimal("100.00");
@@ -58,7 +65,9 @@ class OptimisticLockingWithdrawConcurrencyTest {
                     readyLatch.countDown();
                     startLatch.await();
 
-                    balanceService.withdraw(accountId, withdrawAmount);
+                    // each thread is a distinct withdrawal, not a retry of the same one — its
+                    // own idempotency key, same as any two unrelated real requests would get
+                    balanceService.withdraw(accountId, withdrawAmount, UUID.randomUUID().toString(), ownerId);
 
                     successCount.incrementAndGet();
                 } catch (Throwable ex) {
@@ -78,7 +87,7 @@ class OptimisticLockingWithdrawConcurrencyTest {
 
         executor.shutdown();
 
-        BalanceResponse finalBalance = balanceService.getBalance(accountId);
+        BalanceResponse finalBalance = balanceService.getBalance(accountId, ownerId);
 
         BigDecimal expectedBalance = new BigDecimal("500.00")
                 .subtract(withdrawAmount.multiply(BigDecimal.valueOf(successCount.get())));

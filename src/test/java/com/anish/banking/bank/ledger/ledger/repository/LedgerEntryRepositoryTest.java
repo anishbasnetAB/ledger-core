@@ -1,5 +1,6 @@
 package com.anish.banking.bank.ledger.ledger.repository;
 
+import com.anish.banking.bank.auth.model.User;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.ledger.model.EntryType;
 import com.anish.banking.bank.ledger.ledger.model.LedgerEntry;
@@ -10,6 +11,7 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,8 +22,14 @@ class LedgerEntryRepositoryTest {
     @Autowired LedgerEntryRepository ledger;
     @Autowired TestEntityManager em;
 
+    // account.owner_user_id is a real FK to users(id), so every account needs an owner row
+    // to point at -- this test doesn't care who, just that one exists.
+    private Long newOwner() {
+        return em.persist(new User("owner-" + UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+    }
+
     private Long newAccount() {
-        return em.persist(new Account("Test Owner", "CAD")).getId();
+        return em.persist(new Account("Test Owner", "CAD", newOwner())).getId();
     }
 
     @Test

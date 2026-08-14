@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -41,13 +42,17 @@ class AccountControllerTest {
     // constructor dependency. None of these tests exercise rate limiting.
     @MockitoBean StringRedisTemplate redis;
 
+    // BalanceService is mocked in this slice, so it never actually enforces ownership here
+    // (that's covered against the real service in AccountOwnershipTest) -- the caller id just
+    // needs to be SOME authenticated id for the request to reach the controller at all, so
+    // stubs match it with anyLong() rather than a specific value.
     private String bearerToken() {
-        return "Bearer " + jwtService.generate("test@example.com", "USER");
+        return "Bearer " + jwtService.generate(1L, "test@example.com", "USER");
     }
 
     @Test
     void returnsBalanceAsJson() throws Exception {
-        when(balanceService.getBalance(1L))
+        when(balanceService.getBalance(eq(1L), anyLong()))
                 .thenReturn(new BalanceResponse(1L, "CAD", new BigDecimal("1000.00")));
 
         mockMvc.perform(get("/api/accounts/1/balance").header("Authorization", bearerToken()))
@@ -59,7 +64,7 @@ class AccountControllerTest {
 
     @Test
     void returns404WhenAccountMissing() throws Exception {
-        when(balanceService.getBalance(99L))
+        when(balanceService.getBalance(eq(99L), anyLong()))
                 .thenThrow(new AccountNotFoundException(99L));
 
         mockMvc.perform(get("/api/accounts/99/balance").header("Authorization", bearerToken()))
@@ -68,7 +73,7 @@ class AccountControllerTest {
 
     @Test
     void createsAccountAndReturns201WithLocation() throws Exception {
-        when(balanceService.createAccount("Alice", "CAD"))
+        when(balanceService.createAccount(eq("Alice"), eq("CAD"), anyLong()))
                 .thenReturn(new AccountResponse(7L, "Alice", "CAD", new BigDecimal("0.00")));
 
         mockMvc.perform(post("/api/accounts")

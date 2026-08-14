@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.account.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.model.AccountType;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
@@ -30,18 +32,24 @@ import static org.mockito.Mockito.*;
 class BalanceCacheEvictionTest {
 
     @Autowired AccountRepository accounts;
+    @Autowired UserRepository users;
     @Autowired BalanceService balanceService;
     @Autowired TransferService transferService;
 
     @MockitoBean StringRedisTemplate redis;
     @MockitoSpyBean LedgerEntryRepository ledgerSpy;
 
+    private Long newOwner() {
+        return users.save(new User("owner-" + UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+    }
+
     @Test
     void depositEvictsBothCustomerAndSettlementCacheAfterCommit() {
-        Account customer = accounts.save(new Account("Cache Deposit Test", "CAD"));
+        Long ownerId = newOwner();
+        Account customer = accounts.save(new Account("Cache Deposit Test", "CAD", ownerId));
         Account settlement = accounts.findByAccountTypeAndCurrency(AccountType.SETTLEMENT, "CAD").orElseThrow();
 
-        balanceService.deposit(customer.getId(), new BigDecimal("10.00"));
+        balanceService.deposit(customer.getId(), new BigDecimal("10.00"), UUID.randomUUID().toString(), ownerId);
 
         verify(redis).delete("balance:" + customer.getId());
         verify(redis).delete("balance:" + settlement.getId());
@@ -49,13 +57,14 @@ class BalanceCacheEvictionTest {
 
     @Test
     void withdrawEvictsBothCustomerAndSettlementCacheAfterCommit() {
-        Account customer = accounts.save(new Account("Cache Withdraw Test", "CAD"));
+        Long ownerId = newOwner();
+        Account customer = accounts.save(new Account("Cache Withdraw Test", "CAD", ownerId));
         Account funded = accounts.findById(customer.getId()).orElseThrow();
         funded.credit(new BigDecimal("50.00"));
         accounts.save(funded);
         Account settlement = accounts.findByAccountTypeAndCurrency(AccountType.SETTLEMENT, "CAD").orElseThrow();
 
-        balanceService.withdraw(customer.getId(), new BigDecimal("10.00"));
+        balanceService.withdraw(customer.getId(), new BigDecimal("10.00"), UUID.randomUUID().toString(), ownerId);
 
         verify(redis).delete("balance:" + customer.getId());
         verify(redis).delete("balance:" + settlement.getId());
@@ -63,14 +72,15 @@ class BalanceCacheEvictionTest {
 
     @Test
     void transferEvictsBothSourceAndDestinationCacheAfterCommit() {
-        Account source = accounts.save(new Account("Cache Transfer Source", "CAD"));
+        Long ownerId = newOwner();
+        Account source = accounts.save(new Account("Cache Transfer Source", "CAD", ownerId));
         Account funded = accounts.findById(source.getId()).orElseThrow();
         funded.credit(new BigDecimal("50.00"));
         accounts.save(funded);
-        Account dest = accounts.save(new Account("Cache Transfer Dest", "CAD"));
+        Account dest = accounts.save(new Account("Cache Transfer Dest", "CAD", ownerId));
 
         transferService.transfer(new CreateTransferRequest(source.getId(), dest.getId(), new BigDecimal("10.00")),
-                UUID.randomUUID().toString());
+                UUID.randomUUID().toString(), ownerId);
 
         verify(redis).delete("balance:" + source.getId());
         verify(redis).delete("balance:" + dest.getId());
@@ -78,14 +88,15 @@ class BalanceCacheEvictionTest {
 
     @Test
     void doesNotEvictCacheWhenDepositRollsBack() {
-        Account customer = accounts.save(new Account("Cache Rollback Test", "CAD"));
+        Long ownerId = newOwner();
+        Account customer = accounts.save(new Account("Cache Rollback Test", "CAD", ownerId));
 
         // same failure-injection technique as TransferAtomicityTest: force a mid-transaction
         // crash so the whole deposit rolls back
         doThrow(new RuntimeException("simulated failure"))
                 .when(ledgerSpy).save(argThat(e -> e instanceof LedgerEntry le && le.getEntryType() == EntryType.DEBIT));
 
-        assertThatThrownBy(() -> balanceService.deposit(customer.getId(), new BigDecimal("10.00")))
+        assertThatThrownBy(() -> balanceService.deposit(customer.getId(), new BigDecimal("10.00"), UUID.randomUUID().toString(), ownerId))
                 .isInstanceOf(RuntimeException.class);
 
         verifyNoInteractions(redis);
@@ -93,18 +104,19 @@ class BalanceCacheEvictionTest {
 
     @Test
     void doesNotEvictCacheWhenTransferRollsBack() {
-        Account source = accounts.save(new Account("Cache Transfer Rollback Source", "CAD"));
+        Long ownerId = newOwner();
+        Account source = accounts.save(new Account("Cache Transfer Rollback Source", "CAD", ownerId));
         Account funded = accounts.findById(source.getId()).orElseThrow();
         funded.credit(new BigDecimal("50.00"));
         accounts.save(funded);
-        Account dest = accounts.save(new Account("Cache Transfer Rollback Dest", "CAD"));
+        Account dest = accounts.save(new Account("Cache Transfer Rollback Dest", "CAD", ownerId));
 
         doThrow(new RuntimeException("simulated failure"))
                 .when(ledgerSpy).save(argThat(e -> e instanceof LedgerEntry le && le.getEntryType() == EntryType.CREDIT));
 
         assertThatThrownBy(() -> transferService.transfer(
                 new CreateTransferRequest(source.getId(), dest.getId(), new BigDecimal("10.00")),
-                UUID.randomUUID().toString()))
+                UUID.randomUUID().toString(), ownerId))
                 .isInstanceOf(RuntimeException.class);
 
         verifyNoInteractions(redis);

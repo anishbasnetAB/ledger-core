@@ -2,10 +2,15 @@ package com.anish.banking.bank.ledger.account.service;
 
 import com.anish.banking.bank.ledger.account.dto.AccountResponse;
 import com.anish.banking.bank.ledger.account.dto.BalanceResponse;
+import com.anish.banking.bank.ledger.account.exception.AccountAccessDeniedException;
 import com.anish.banking.bank.ledger.account.exception.AccountNotFoundException;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.model.AccountType;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
+import com.anish.banking.bank.ledger.idempotency.RequestHasher;
+import com.anish.banking.bank.ledger.idempotency.exception.IdempotencyKeyConflictException;
+import com.anish.banking.bank.ledger.idempotency.model.IdempotencyKey;
+import com.anish.banking.bank.ledger.idempotency.repository.IdempotencyKeyRepository;
 import com.anish.banking.bank.ledger.ledger.model.LedgerEntry;
 import com.anish.banking.bank.ledger.ledger.repository.LedgerEntryRepository;
 import com.anish.banking.bank.ledger.transfer.event.TransferCompletedEvent;
@@ -20,10 +25,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.util.function.Supplier;
 
 @Service
 public class BalanceService {
@@ -39,32 +46,38 @@ public class BalanceService {
     private final AccountRepository accounts;
     private final LedgerEntryRepository ledger;
     private final TransferRepository transfers;
+    private final IdempotencyKeyRepository idempotencyKeys;
     private final ApplicationEventPublisher events;
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
 
     public BalanceService(AccountRepository accounts, LedgerEntryRepository ledger, TransferRepository transfers,
-                           ApplicationEventPublisher events, StringRedisTemplate redis, ObjectMapper objectMapper) {
+                           IdempotencyKeyRepository idempotencyKeys, ApplicationEventPublisher events,
+                           StringRedisTemplate redis, ObjectMapper objectMapper) {
         this.accounts = accounts;
         this.ledger = ledger;
         this.transfers = transfers;
+        this.idempotencyKeys = idempotencyKeys;
         this.events = events;
         this.redis = redis;
         this.objectMapper = objectMapper;
     }
 
     @Transactional
-    public AccountResponse createAccount(String ownerName, String currency) {
+    public AccountResponse createAccount(String ownerName, String currency, Long ownerUserId) {
         // Owner-supplied strings are normalized once, here, before they hit the ledger:
         // trim the name, force the ISO currency to upper-case so "cad" and "CAD" never
         // create two distinct currency buckets. The Account constructor seeds balance 0.00
-        // and type CUSTOMER.
-        Account account = accounts.save(new Account(ownerName.trim(), currency.toUpperCase()));
+        // and type CUSTOMER. ownerUserId comes from the authenticated caller, never the
+        // request body -- a client can't create an account on someone else's behalf.
+        Account account = accounts.save(new Account(ownerName.trim(), currency.toUpperCase(), ownerUserId));
         return AccountResponse.from(account);
     }
 
     @Transactional(readOnly = true)
-    public BalanceResponse getBalance(Long accountId) {
+    public BalanceResponse getBalance(Long accountId, Long callerId) {
+        requireOwnership(accountId, callerId);
+
         BalanceResponse cached = readFromCache(accountId);
         if (cached != null) {
             return cached;
@@ -78,8 +91,36 @@ public class BalanceService {
         return response;
     }
 
+    // The ownership gate every single-account operation below runs through first, before
+    // touching the cache or doing anything else -- a cache entry has no owner attached to it,
+    // so this can never be skipped on a cache hit. Existence and ownership are checked
+    // together on purpose (see AccountRepository#existsByIdAndOwnerUserId): a nonexistent
+    // account and someone else's account must be impossible to tell apart from the outside.
+    private void requireOwnership(Long accountId, Long callerId) {
+        if (!accounts.existsByIdAndOwnerUserId(accountId, callerId)) {
+            throw new AccountAccessDeniedException();
+        }
+    }
+
+    // Same idempotency contract as TransferService.transfer(): a client-supplied key that
+    // must be replayed unchanged for a retried request. Wired in here rather than duplicated
+    // per-operation — deposit and withdraw only differ in which doX() runs and what "operation"
+    // tags the hash.
     @Transactional
-    public BalanceResponse deposit(Long accountId, BigDecimal amount) {
+    public BalanceResponse deposit(Long accountId, BigDecimal amount, String idempotencyKey, Long callerId) {
+        requireOwnership(accountId, callerId);
+        return withIdempotency("deposit", accountId, amount, idempotencyKey,
+                () -> doDeposit(accountId, amount));
+    }
+
+    @Transactional
+    public BalanceResponse withdraw(Long accountId, BigDecimal amount, String idempotencyKey, Long callerId) {
+        requireOwnership(accountId, callerId);
+        return withIdempotency("withdraw", accountId, amount, idempotencyKey,
+                () -> doWithdraw(accountId, amount));
+    }
+
+    private BalanceResponse doDeposit(Long accountId, BigDecimal amount) {
         Account customer = accounts.findById(accountId)
                 .orElseThrow(() -> new AccountNotFoundException(accountId));
         Account settlement = accounts
@@ -103,8 +144,7 @@ public class BalanceService {
         return toBalanceResponse(customer);
     }
 
-    @Transactional
-    public BalanceResponse withdraw(Long accountId, BigDecimal amount) {
+    private BalanceResponse doWithdraw(Long accountId, BigDecimal amount) {
         Account customer = accounts.findById(accountId)
                 .orElseThrow(() -> new AccountNotFoundException(accountId));
         Account settlement = accounts
@@ -126,6 +166,47 @@ public class BalanceService {
         events.publishEvent(new BalanceChangedEvent(settlement.getId()));
 
         return toBalanceResponse(customer);
+    }
+
+    // Check-then-act, same as TransferService.transfer(): look the key up, replay the stored
+    // response on a match, reject a key reused for a different request, otherwise run the
+    // operation and record its result under this key. Runs inside the caller's @Transactional
+    // deposit/withdraw, so the money movement and the idempotency row commit or roll back
+    // together — a losing racer's insert hits the idempotency_key unique constraint and takes
+    // its whole transaction down with it, same guarantee IdempotencyConcurrencyTest proves for
+    // transfers.
+    private BalanceResponse withIdempotency(String operation, Long accountId, BigDecimal amount,
+                                             String idempotencyKey, Supplier<BalanceResponse> action) {
+        String incomingHash = RequestHasher.hash(operation, accountId, amount);
+
+        var existing = idempotencyKeys.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            IdempotencyKey stored = existing.get();
+            if (!stored.getRequestHash().equals(incomingHash)) {
+                throw new IdempotencyKeyConflictException(idempotencyKey);
+            }
+            return deserialize(stored.getResponseBody());
+        }
+
+        BalanceResponse response = action.get();
+        idempotencyKeys.save(new IdempotencyKey(idempotencyKey, incomingHash, serialize(response), 200));
+        return response;
+    }
+
+    private String serialize(BalanceResponse response) {
+        try {
+            return objectMapper.writeValueAsString(response);
+        } catch (JacksonException e) {
+            throw new IllegalStateException("Failed to serialize BalanceResponse", e);
+        }
+    }
+
+    private BalanceResponse deserialize(String body) {
+        try {
+            return objectMapper.readValue(body, BalanceResponse.class);
+        } catch (JacksonException e) {
+            throw new IllegalStateException("Failed to deserialize stored response", e);
+        }
     }
 
     // AFTER_COMMIT, same reasoning and same mechanism as TransferEventPublisher's Kafka

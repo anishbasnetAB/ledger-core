@@ -9,7 +9,7 @@ class AccountDebitFloorTest {
 
     @Test
     void customerCannotOverdraw() {
-        Account customer = new Account("Test Customer", "CAD"); // defaults to CUSTOMER
+        Account customer = new Account("Test Customer", "CAD", 1L); // defaults to CUSTOMER
         customer.credit(new BigDecimal("100.00"));
         assertThatThrownBy(() -> customer.debit(new BigDecimal("150.00")))
                 .isInstanceOf(InsufficientFundsException.class);
@@ -17,7 +17,7 @@ class AccountDebitFloorTest {
 
     @Test
     void positiveAmountGuardStillFiresForEveryone() {
-        Account customer = new Account("Test Customer", "CAD");
+        Account customer = new Account("Test Customer", "CAD", 1L);
         assertThatThrownBy(() -> customer.debit(BigDecimal.ZERO))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> customer.debit(new BigDecimal("-5.00")))

@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.transfer.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
 import com.anish.banking.bank.ledger.ledger.model.EntryType;
@@ -19,13 +21,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 class IdempotencyConcurrencyTest {
 
     @Autowired AccountRepository accounts;
+    @Autowired UserRepository users;
     @Autowired LedgerEntryRepository ledger;
     @Autowired TransferService transferService;
 
     @Test
     void concurrentSameKeyRequestsMoveMoneyOnce() throws Exception {
-        Account alice = accounts.save(new Account("Alice", "CAD"));
-        Account bob = accounts.save(new Account("Bob", "CAD"));
+        Long aliceOwnerId = users.save(new User("alice-" + java.util.UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+        Account alice = accounts.save(new Account("Alice", "CAD", aliceOwnerId));
+        Account bob = accounts.save(new Account("Bob", "CAD", aliceOwnerId));
         Account aliceFunded = accounts.findById(alice.getId()).orElseThrow();
         aliceFunded.credit(new BigDecimal("500.00"));
         accounts.save(aliceFunded);
@@ -51,7 +55,7 @@ class IdempotencyConcurrencyTest {
                 try {
                     readyLatch.countDown();
                     startLatch.await();
-                    transferService.transfer(req, key);
+                    transferService.transfer(req, key, aliceOwnerId);
                     successCount.incrementAndGet();
                 } catch (Throwable ex) {
                     failureCount.incrementAndGet();

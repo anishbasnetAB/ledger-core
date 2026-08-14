@@ -1,7 +1,7 @@
 package com.anish.banking.bank.ledger.account.service;
 
 import com.anish.banking.bank.ledger.account.dto.BalanceResponse;
-import com.anish.banking.bank.ledger.account.exception.AccountNotFoundException;
+import com.anish.banking.bank.ledger.account.exception.AccountAccessDeniedException;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
 import com.anish.banking.bank.ledger.ledger.repository.LedgerEntryRepository;
@@ -40,6 +40,8 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class BalanceServiceTest {
 
+    private static final Long CALLER_ID = 1L;
+
     @Mock
     private AccountRepository accounts;
 
@@ -68,14 +70,15 @@ class BalanceServiceTest {
 
     @Test
     void returnsBalanceForExistingAccountOnCacheMiss() {
-        Account account = new Account("Anish", "CAD");
+        Account account = new Account("Anish", "CAD", CALLER_ID);
         ReflectionTestUtils.setField(account, "id", 1L);
         account.credit(new BigDecimal("900.00"));
 
+        when(accounts.existsByIdAndOwnerUserId(1L, CALLER_ID)).thenReturn(true);
         when(valueOps.get("balance:1")).thenReturn(null);       // cache miss
         when(accounts.findById(1L)).thenReturn(Optional.of(account));
 
-        BalanceResponse response = balanceService.getBalance(1L);
+        BalanceResponse response = balanceService.getBalance(1L, CALLER_ID);
 
         assertThat(response).isNotNull();
         assertThat(response.accountId()).isEqualTo(1L);
@@ -92,41 +95,48 @@ class BalanceServiceTest {
     void returnsCachedBalanceWithoutHittingTheDatabase() {
         String cachedJson = """
                 {"accountId":1,"currency":"CAD","balance":900.00}""";
+        when(accounts.existsByIdAndOwnerUserId(1L, CALLER_ID)).thenReturn(true);
         when(valueOps.get("balance:1")).thenReturn(cachedJson);
 
-        BalanceResponse response = balanceService.getBalance(1L);
+        BalanceResponse response = balanceService.getBalance(1L, CALLER_ID);
 
         assertThat(response.accountId()).isEqualTo(1L);
         assertThat(response.balance()).isEqualByComparingTo("900.00");
 
-        verifyNoInteractions(accounts);   // cache hit -> DB never touched
+        // the ownership check always runs (a cache entry carries no owner to check against),
+        // but the balance itself never needs a full account fetch on a cache hit
+        verify(accounts).existsByIdAndOwnerUserId(1L, CALLER_ID);
+        verify(accounts, never()).findById(anyLong());
         verifyNoInteractions(ledger);
         verify(valueOps, never()).set(anyString(), anyString(), any(java.time.Duration.class));
     }
 
     @Test
     void fallsBackToDbWhenCacheReadFails() {
+        when(accounts.existsByIdAndOwnerUserId(1L, CALLER_ID)).thenReturn(true);
         when(valueOps.get("balance:1")).thenThrow(new RuntimeException("redis down"));
-        Account account = new Account("Anish", "CAD");
+        Account account = new Account("Anish", "CAD", CALLER_ID);
         ReflectionTestUtils.setField(account, "id", 1L);
         account.credit(new BigDecimal("900.00"));
         when(accounts.findById(1L)).thenReturn(Optional.of(account));
 
-        BalanceResponse response = balanceService.getBalance(1L);
+        BalanceResponse response = balanceService.getBalance(1L, CALLER_ID);
 
         assertThat(response.balance()).isEqualByComparingTo("900.00");
         verify(accounts).findById(1L);
     }
 
     @Test
-    void throwsWhenAccountDoesNotExist() {
-        when(valueOps.get("balance:99")).thenReturn(null);
-        when(accounts.findById(99L)).thenReturn(Optional.empty());
+    void deniesAccessWhenAccountIsNotOwnedByCaller() {
+        // Same outcome whether account 99 belongs to someone else or doesn't exist at all —
+        // existsByIdAndOwnerUserId returning false covers both, and that's the point: this
+        // caller can't tell the two apart from the response.
+        when(accounts.existsByIdAndOwnerUserId(99L, CALLER_ID)).thenReturn(false);
 
-        assertThatThrownBy(() -> balanceService.getBalance(99L))
-                .isInstanceOf(AccountNotFoundException.class);
+        assertThatThrownBy(() -> balanceService.getBalance(99L, CALLER_ID))
+                .isInstanceOf(AccountAccessDeniedException.class);
 
-        verify(accounts).findById(99L);
+        verify(accounts, never()).findById(anyLong());
         verifyNoInteractions(ledger);
     }
 }

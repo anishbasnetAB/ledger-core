@@ -1,5 +1,6 @@
 package com.anish.banking.bank.ledger.transfer.service;
 
+import com.anish.banking.bank.ledger.account.repository.AccountRepository;
 import com.anish.banking.bank.ledger.ledger.model.EntryType;
 import com.anish.banking.bank.ledger.ledger.model.LedgerEntry;
 import com.anish.banking.bank.ledger.ledger.repository.LedgerEntryRepository;
@@ -20,11 +21,17 @@ class TransferAtomicityTest {
 
     @Autowired TransferService transferService;
     @Autowired LedgerEntryRepository ledger;
+    @Autowired AccountRepository accounts;
 
     @MockitoSpyBean LedgerEntryRepository ledgerSpy;   // wraps the real repo; we override one call
 
     @Test
     void failureAfterDebitRollsBackEverything() {
+        // Account 1 is the seeded demo account -- transfer as whoever actually owns it, so
+        // this test exercises the simulated mid-transfer crash below, not the (unrelated)
+        // ownership check that now runs first.
+        Long sourceOwnerId = accounts.findById(1L).orElseThrow().getOwnerUserId();
+
         BigDecimal sourceBefore = ledger.deriveBalance(1L);
         BigDecimal destBefore   = ledger.deriveBalance(2L);
 
@@ -35,7 +42,7 @@ class TransferAtomicityTest {
 
         assertThatThrownBy(() ->
                 transferService.transfer(new CreateTransferRequest(1L, 2L, new BigDecimal("100.00")),
-                        java.util.UUID.randomUUID().toString()))
+                        java.util.UUID.randomUUID().toString(), sourceOwnerId))
                 .isInstanceOf(RuntimeException.class);
 
         // the whole transaction must have rolled back: balances exactly as before

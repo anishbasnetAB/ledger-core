@@ -1,5 +1,6 @@
 package com.anish.banking.bank.ledger.transfer.service;
 
+import com.anish.banking.bank.ledger.account.repository.AccountRepository;
 import com.anish.banking.bank.ledger.ledger.model.EntryType;
 import com.anish.banking.bank.ledger.ledger.model.LedgerEntry;
 import com.anish.banking.bank.ledger.ledger.repository.LedgerEntryRepository;
@@ -28,17 +29,19 @@ class TransferEventPublishingTest {
 
     @Autowired TransferService transferService;
     @Autowired LedgerEntryRepository ledger;
+    @Autowired AccountRepository accounts;
 
     @MockitoBean KafkaTemplate<String, Object> kafkaTemplate;
     @MockitoSpyBean LedgerEntryRepository ledgerSpy;
 
     @Test
     void publishesEventAfterSuccessfulTransfer() {
+        Long sourceOwnerId = accounts.findById(1L).orElseThrow().getOwnerUserId();
         when(kafkaTemplate.send(anyString(), anyString(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         var response = transferService.transfer(
-                new CreateTransferRequest(1L, 2L, new BigDecimal("10.00")), UUID.randomUUID().toString());
+                new CreateTransferRequest(1L, 2L, new BigDecimal("10.00")), UUID.randomUUID().toString(), sourceOwnerId);
 
         // fires synchronously: AFTER_COMMIT runs in the same thread, right after commit,
         // before transfer() returns — no need to wait/poll for it.
@@ -52,12 +55,13 @@ class TransferEventPublishingTest {
 
     @Test
     void doesNotPublishWhenTransferRollsBack() {
+        Long sourceOwnerId = accounts.findById(1L).orElseThrow().getOwnerUserId();
         // simulate a mid-transfer crash, same technique as TransferAtomicityTest
         doThrow(new RuntimeException("simulated failure after debit"))
                 .when(ledgerSpy).save(argThat(e -> e instanceof LedgerEntry le && le.getEntryType() == EntryType.CREDIT));
 
         assertThatThrownBy(() -> transferService.transfer(
-                new CreateTransferRequest(1L, 2L, new BigDecimal("10.00")), UUID.randomUUID().toString()))
+                new CreateTransferRequest(1L, 2L, new BigDecimal("10.00")), UUID.randomUUID().toString(), sourceOwnerId))
                 .isInstanceOf(RuntimeException.class);
 
         verifyNoInteractions(kafkaTemplate);

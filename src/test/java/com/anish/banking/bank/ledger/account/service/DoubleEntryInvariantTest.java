@@ -1,5 +1,7 @@
 package com.anish.banking.bank.ledger.account.service;
 
+import com.anish.banking.bank.auth.model.User;
+import com.anish.banking.bank.auth.repository.UserRepository;
 import com.anish.banking.bank.ledger.account.model.Account;
 import com.anish.banking.bank.ledger.account.model.AccountType;
 import com.anish.banking.bank.ledger.account.repository.AccountRepository;
@@ -24,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DoubleEntryInvariantTest {
 
     @Autowired AccountRepository accounts;
+    @Autowired UserRepository users;
     @Autowired LedgerEntryRepository ledger;
     @Autowired TransferRepository transfers;
     @Autowired BalanceService balanceService;
@@ -32,8 +35,9 @@ class DoubleEntryInvariantTest {
     @Test
     void everyMovementNetsToZeroAndStoredBalanceMatchesDerived() {
         // --- arrange: two customer accounts + the settlement account ---
-        Account alice = accounts.save(new Account("Alice", "CAD"));
-        Account bob   = accounts.save(new Account("Bob", "CAD"));
+        Long ownerId = users.save(new User("owner-" + java.util.UUID.randomUUID() + "@test.local", "unused-hash")).getId();
+        Account alice = accounts.save(new Account("Alice", "CAD", ownerId));
+        Account bob   = accounts.save(new Account("Bob", "CAD", ownerId));
         Account settlement = accounts
                 .findByAccountTypeAndCurrency(AccountType.SETTLEMENT, "CAD")
                 .orElseThrow();
@@ -44,11 +48,11 @@ class DoubleEntryInvariantTest {
                 .collect(Collectors.toSet());
 
         // --- act: a deposit, a withdrawal, a transfer ---
-        balanceService.deposit(alice.getId(), new BigDecimal("200.00"));
-        balanceService.withdraw(alice.getId(), new BigDecimal("50.00"));
+        balanceService.deposit(alice.getId(), new BigDecimal("200.00"), java.util.UUID.randomUUID().toString(), ownerId);
+        balanceService.withdraw(alice.getId(), new BigDecimal("50.00"), java.util.UUID.randomUUID().toString(), ownerId);
         transferService.transfer(new CreateTransferRequest(
                 alice.getId(), bob.getId(), new BigDecimal("75.00")),
-                java.util.UUID.randomUUID().toString());
+                java.util.UUID.randomUUID().toString(), ownerId);
 
         // --- assert 1: exactly the three movements this test created, each nets to zero ---
         Set<Long> createdMovementIds = transfers.findAll().stream()
