@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.math.BigDecimal;
+import java.util.Collection;
+import java.util.List;
 
 // Repository for LedgerEntry records that provides standard JPA CRUD operations
 // and custom queries for reconciliation/testing.
@@ -30,4 +32,8 @@ public interface LedgerEntryRepository extends JpaRepository<LedgerEntry, Long> 
     BigDecimal sumSignedAmountByTransferId(@Param("transferId") Long transferId);
 
     long countByAccountIdAndEntryType(Long accountId, EntryType entryType);
+
+    // Bulk fetch for auditing a known batch of transfers (e.g. a reconciliation sweep or the
+    // transfer-volume stress test) in one round trip instead of one query per transfer id.
+    List<LedgerEntry> findByTransferIdIn(Collection<Long> transferIds);
 }

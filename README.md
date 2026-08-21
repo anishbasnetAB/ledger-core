@@ -37,6 +37,8 @@ The ledger table is protected at the database level by a trigger that rejects an
 **Idempotent transfers**
 Transfers require an `Idempotency-Key` header. If a client retries the same request (e.g. after a timeout), the money moves only once and the original result is returned. Reusing a key for a genuinely different request is safely rejected.
 
+Validated with a 1,000-transfer concurrent stress test over real HTTP against real Postgres (16 workers, 50 of the transfers additionally raced 3-way on the same `Idempotency-Key`): zero duplicate postings, every transfer balanced and correctly reflected in both accounts, zero genuine failures. Reproducible in one command — see the [test](src/test/java/com/anish/banking/bank/stress/TransferVolumeStressTest.java) and its generated [report](docs/transfer-stress-test-report.md) (this is a correctness/stress result on one local machine, not a production scalability benchmark — the report's "Limits" section spells that out).
+
 **Authentication**
 Every endpoint except health and auth itself requires a signed-in user. Register or log in with email + password (hashed with bcrypt, no email verification) to get back a stateless JWT; requests carry it as `Authorization: Bearer <token>`. A lightweight USER/ADMIN role gates the reconciliation admin endpoints to ADMIN only.
 
