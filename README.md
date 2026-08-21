@@ -6,8 +6,7 @@ This is a learning project I built to go deeper than CRUD: the goal was a small 
 
 *Note: at this project's scale, Kafka isn't a need — it's here deliberately, to demonstrate event-driven design and idempotent consumption alongside the transaction-safety and concurrency work elsewhere in the project.*
 
-🔗 **Live demo:** `https://ledger-core-frontend-anish.vercel.app/` `https://ledger-core.onrender.com`
-(Hosted on Render with a managed Neon PostgreSQL database. First request after idle may take ~30–60s to wake up.)
+🔗 **Live demo:** `https://ledger-core-frontend-anish.vercel.app/` **Hosted on AWS**
 
 ---
 
